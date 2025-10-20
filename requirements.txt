@@ -6,7 +6,8 @@ numpy==1.23.5
 resampy
 soundfile
 pydub
-gradio==4.29.0
+gradio
 requests
 tqdm
 pedalboard
+
