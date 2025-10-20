@@ -56,6 +56,20 @@ url_uvr = "https://modelscope.cn/api/v1/models/CCYellowStar/5_HP-Karaoke-UVR/rep
 destination_uvr = "uvr5/uvr_model/5_HP-Karaoke-UVR.pth"
 download_file_openxlab(url_uvr, destination_uvr)
 
+# ========== 新增：音高优化函数 ==========
+def optimize_pitch_shift(key_shift):
+    """
+    将升降调优化到最小调整幅度，保证最佳音质
+    例如：+11 转为 -1，-10 转为 +2
+    """
+    if key_shift > 6:
+        return key_shift - 12
+    elif key_shift < -6:
+        return key_shift + 12
+    else:
+        return key_shift
+# ======================================
+
 def get_response(song_id):
   print("开始下载歌曲")
   try:
@@ -266,7 +280,7 @@ def convert(song_name_src, key_shift, vocal_vol, inst_vol, model_dropdown):
     if audio_data.ndim == 1:
         audio_data = audio_data.reshape(1, -1)
 
-    from pedalboard import Pedalboard, Compressor, Reverb, HighpassFilter, PeakFilter, LowpassFilter
+    from pedalboard import Pedalboard, Compressor, Reverb, HighpassFilter, PeakFilter, LowpassFilter, PitchShift
 
     board = Pedalboard([
         HighpassFilter(cutoff_frequency_hz=80),
@@ -301,11 +315,45 @@ def convert(song_name_src, key_shift, vocal_vol, inst_vol, model_dropdown):
     audio_vocal_adjusted = processed_audio + vocal_vol
     normalized_audio = normalize(audio_vocal_adjusted, headroom=-1.0)
     
-    print("🎵 混合伴奏...")
-    audio_inst = AudioSegment.from_file(
-        f"output/{split_model}/{song_name_src}/instrument_{song_name_src}.wav_10.wav",
-        format="wav"
-    )
+    # ========== 新增：处理伴奏音高 ==========
+    print("🎵 准备伴奏...")
+    inst_path = f"output/{split_model}/{song_name_src}/instrument_{song_name_src}.wav_10.wav"
+    key_shift = optimize_pitch_shift(key_shift)
+    # 当升降调不为0且不是±12（八度）时，同步调整伴奏
+    if key_shift != 0 and abs(key_shift) != 12:
+        print(f"🎹 正在将伴奏音高调整 {key_shift:+d} 半音以匹配人声...")
+        
+        try:
+            # 加载伴奏
+            y_inst, sr_inst = librosa.load(inst_path, sr=None)
+            
+            # 创建一个只包含音高调整效果的 Pedalboard
+            pitch_board = Pedalboard([
+                PitchShift(semitones=key_shift)
+            ])
+            
+            # 应用效果
+            y_shifted = pitch_board(y_inst, sr_inst)
+            
+            # 保存处理后的伴奏为临时文件
+            shifted_inst_path = f"temp/shifted_{song_name_src}_inst.wav"
+            soundfile.write(shifted_inst_path, y_shifted, sr_inst)
+            
+            # 从处理后的文件加载为 AudioSegment
+            audio_inst = AudioSegment.from_file(shifted_inst_path, format="wav")
+            
+            print(f"✅ 伴奏音高调整完成")
+        except Exception as e:
+            print(f"⚠️ 伴奏音高调整失败，使用原始伴奏: {e}")
+            audio_inst = AudioSegment.from_file(inst_path, format="wav")
+    else:
+        # 不需要调整伴奏（key_shift为0或±12）
+        if key_shift == 0:
+            print("🎹 不调整伴奏音高")
+        else:
+            print(f"🎹 升降调为±12（八度），无需调整伴奏音高")
+        audio_inst = AudioSegment.from_file(inst_path, format="wav")
+
     audio_inst = audio_inst + inst_vol
     combined_audio = normalized_audio.overlay(audio_inst)
 
@@ -414,4 +462,5 @@ else:
 
 app.queue(max_size=40, api_open=False)
 app.launch(server_name="0.0.0.0", share=True, show_error=True)
+
 
