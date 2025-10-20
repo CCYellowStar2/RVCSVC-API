@@ -2,6 +2,40 @@ import re, os, requests, json, torch, shutil, argparse, base64
 from difflib import SequenceMatcher
 from urllib.parse import urlparse
 
+def download_file_openxlab(url, destination):
+    # 检查目标文件是否已经存在
+    if os.path.exists(destination):
+        print("File already exists, skipping download.")
+        return
+    else:
+        print(" start download... "+destination)  
+        
+    # 获取目标文件的目录部分
+    directory = os.path.dirname(destination)
+    
+    # 确保目标文件夹存在
+    if directory and not os.path.exists(directory):
+        os.makedirs(directory)
+    while True:
+        try:
+            response = requests.get(url)
+            if response.status_code == 200:
+                with open(destination, 'wb') as f:
+                    f.write(response.content)
+                print("File downloaded successfully!")
+                break
+            else:
+                print(f"Failed to download file. Status code: {response.status_code}")
+        except Exception as e:
+            print(f"Error occurred: {e}")
+        
+        print("Retrying in 5 seconds...")
+        time.sleep(5)
+        
+url_uvr = "https://modelscope.cn/api/v1/models/CCYellowStar/5_HP-Karaoke-UVR/repo?Revision=master&FilePath=5_HP-Karaoke-UVR.pth"
+destination_uvr = "uvr5/uvr_model/5_HP-Karaoke-UVR.pth"
+download_file_openxlab(url_uvr, destination_uvr)
+
 # --- 全局配置 ---
 SVC_API_BASE = "http://127.0.0.1:7865"
 TIMEOUT = 240
@@ -331,4 +365,5 @@ else:
 
 app.queue(max_size=40, api_open=False)
 app.launch(server_name="0.0.0.0",server_port=7866, share=True, show_error=True)
+
 
