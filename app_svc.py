@@ -55,6 +55,20 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 #               适配 so-vits-svc API 的核心函数
 # =================================================================
 
+# ========== 新增：音高优化函数 ==========
+def optimize_pitch_shift(key_shift):
+    """
+    将升降调优化到最小调整幅度，保证最佳音质
+    例如：+11 转为 -1，-10 转为 +2
+    """
+    if key_shift > 6:
+        return key_shift - 12
+    elif key_shift < -6:
+        return key_shift + 12
+    else:
+        return key_shift
+# ======================================
+
 def find_best_fuzzy_match(source_basename, candidate_list, threshold=0.4, default_value="not_found"):
     """在候选列表中模糊查找与源名称最匹配的文件。"""
     best_score = threshold
@@ -207,7 +221,7 @@ def convert_svc(input_audio_path: str, speaker_id: str, key_shift: int):
 from uvr5.vr import AudioPre
 from pydub import AudioSegment
 from pydub.effects import normalize
-from pedalboard import Pedalboard, Compressor, Reverb, HighpassFilter, PeakFilter, LowpassFilter
+from pedalboard import Pedalboard, Compressor, Reverb, HighpassFilter, PeakFilter, LowpassFilter, PitchShift
 import librosa, soundfile, gradio as gr, numpy as np
 
 headers = {"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}
@@ -298,7 +312,45 @@ def convert(song_name_src, key_shift, vocal_vol, inst_vol, model_dropdown):
     processed_int16 = (processed.T * 32768).astype(np.int16)
     processed_audio = AudioSegment(processed_int16.tobytes(), frame_rate=sr, sample_width=2, channels=processed.shape[0])
     normalized_audio = normalize(processed_audio + vocal_vol, headroom=-1.0)
-    audio_inst = AudioSegment.from_file(f"output/{split_model}/{song_name_src}/instrument_{song_name_src}.wav_10.wav") + inst_vol
+    # ========== 新增：处理伴奏音高 ==========
+    print("🎵 准备伴奏...")
+    inst_path = f"output/{split_model}/{song_name_src}/instrument_{song_name_src}.wav_10.wav"
+    key_shift = optimize_pitch_shift(key_shift)
+    # 当升降调不为0且不是±12（八度）时，同步调整伴奏
+    if key_shift != 0 and abs(key_shift) != 12:
+        print(f"🎹 正在将伴奏音高调整 {key_shift:+d} 半音以匹配人声...")
+        
+        try:
+            # 加载伴奏
+            y_inst, sr_inst = librosa.load(inst_path, sr=None)
+            
+            # 创建一个只包含音高调整效果的 Pedalboard
+            pitch_board = Pedalboard([
+                PitchShift(semitones=key_shift)
+            ])
+            
+            # 应用效果
+            y_shifted = pitch_board(y_inst, sr_inst)
+            
+            # 保存处理后的伴奏为临时文件
+            shifted_inst_path = f"temp/shifted_{song_name_src}_inst.wav"
+            soundfile.write(shifted_inst_path, y_shifted, sr_inst)
+            
+            # 从处理后的文件加载为 AudioSegment
+            audio_inst = AudioSegment.from_file(shifted_inst_path, format="wav")
+            
+            print(f"✅ 伴奏音高调整完成")
+        except Exception as e:
+            print(f"⚠️ 伴奏音高调整失败，使用原始伴奏: {e}")
+            audio_inst = AudioSegment.from_file(inst_path, format="wav")
+    else:
+        # 不需要调整伴奏（key_shift为0或±12）
+        if key_shift == 0:
+            print("🎹 不调整伴奏音高")
+        else:
+            print(f"🎹 升降调为±12（八度），无需调整伴奏音高")
+        audio_inst = AudioSegment.from_file(inst_path, format="wav")
+    audio_inst = audio_inst + inst_vol
     combined_audio = normalized_audio.overlay(audio_inst)
     # === 修改：输出文件名加上 SVC 标识 ===
     output_filename = f"temp/{sanitize_filename(song_name_src)}-SVC-AI翻唱.mp3"
@@ -365,5 +417,6 @@ else:
 
 app.queue(max_size=40, api_open=False)
 app.launch(server_name="0.0.0.0",server_port=7866, share=True, show_error=True)
+
 
 
