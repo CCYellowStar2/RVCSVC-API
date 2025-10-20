@@ -81,7 +81,14 @@ python app_rvc.py
 
 # 或启动 SVC 版本
 python app_svc.py
+
+# CPU 模式（无 GPU）
+python app_rvc.py --is_nohalf
 ```
+
+**⏳ 首次启动时会自动下载 UVR5 人声分离模型（约 120MB），请耐心等待。**
+
+启动成功后，访问控制台输出的链接（通常是 `http://127.0.0.1:7860`）。
 
 访问控制台输出的链接（通常是 `http://127.0.0.1:7860`）即可使用 Web 界面。
 
