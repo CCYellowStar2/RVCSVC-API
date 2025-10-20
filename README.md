@@ -24,6 +24,8 @@ RVCSVC-API/
 └── temp/ # 最终输出文件目录
 ```
 
+**整合包下载链接：** [ModelScope 下载](https://www.modelscope.cn/models/CCYellowStar/RVCSVC-API/resolve/master/RVCSVC-API.7z)
+
 ## 🚀 快速开始
 
 ### 1. 环境要求
