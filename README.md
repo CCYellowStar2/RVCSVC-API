@@ -38,7 +38,7 @@ RVCSVC-API/
 
 ```bash
 # 克隆项目
-git clone https://github.com/your-username/RVCSVC-API.git
+git clone https://github.com/CCYellowStar2/RVCSVC-API.git
 cd RVCSVC-API
 
 # 安装依赖
@@ -66,13 +66,13 @@ pedalboard
 #### 使用 RVC (app_rvc.py)
 
 1. 启动 RVC WebUI（假设运行在 `http://127.0.0.1:7897`）
-2. 在 RVC WebUI 中加载你的模型
+2. 在 RVC WebUI 模型目录中放置模型及相关文件
 3. 确保 `app_rvc.py` 中的 `RVC_API_BASE` 设置正确
 
 #### 使用 SoVITS-SVC (app_svc.py)
 
 1. 启动 so-vits-svc WebUI（假设运行在 `http://127.0.0.1:7865`）
-2. 在 SVC WebUI 中放置模型文件
+2. 在 SVC WebUI 模型目录中放置模型及相关文件
 3. 确保 `app_svc.py` 中的 `SVC_API_BASE` 设置正确
 
 ### 4. 启动服务
@@ -99,7 +99,7 @@ python app_rvc.py --is_nohalf
 **📌 启动前请务必阅读：[使用说明.md](./使用说明.md)**
 
 核心要点：
-- ✅ 必须先启动 RVC/SVC WebUI，再启动 API 服务
+- ✅ 先启动 RVC/SVC WebUI，再启动 API 服务
 - ✅ 模型文件直接放在指定目录，不要嵌套文件夹
 - ✅ Index 文件需重命名为与模型名一致
 - ✅ SVC 需切换到"独立目录模式"
@@ -114,7 +114,7 @@ python app_rvc.py --is_nohalf
 2. **选择/加载模型**：从下拉菜单选择模型，点击 ✨ 切换/✅ 加载
 3. **输入歌曲**：填写网易云音乐 ID 或完整链接（如 `114514` 或 `https://music.163.com/song?id=114514`）
 4. **调整参数**：
-- 升降调：-12 至 +12（推荐男转女 +12，女转男 -12）
+- 升降调：-12 至 +12（推荐女唱男 +6，男唱女 -6，伴奏会自动对齐音调）
 - 人声/伴奏音量：-10dB 至 +10dB
 5. **开始转换**：点击 💕 按钮，等待处理完成
 
