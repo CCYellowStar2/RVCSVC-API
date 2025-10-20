@@ -1,0 +1,5 @@
+请先启动svc或rvc再启动对应api，如果你改了svc或者rvc的端口，你需要在app_rvc.py或app_svc.py里的顶部API_BASE配置项修改，如果要使用svcapi，请把先这个项目里提示的文件夹里的文件替换到svc根目录
+api开放/show_model和/convert两个api可用（有其他开放的api可以不用管他）详情可以去webui底部的通过api使用查看，其中/convert会自动加载模型
+
+关于模型文件存放名字尽量和模型名字一样 rvc模型文件就放在 "rvc项目路径\assets\weights"这个文件夹里，不要在里面在建个文件夹放进去，index文件就放在"rvc项目路径\log"这个文件夹里，也不要在里面建文件夹放进去，特别是训练出来的index文件它默认会再建个模型名字的文件夹在里面放added开头的index文件，请把他移动出来，然后去掉名字前一大串，比如“added_IVF4949_Flat_nprobe_1_arti_v2.index”删成“arti_v2.index”（跟模型一样），这些操作做完api读取才不会出错 
+svc的模型存放也是同理，也是模型和配置就放在“svc项目路径\models”里，不要新建文件夹，名字最好和模型一样，然后扩散模型就放“svc项目路径\models\diffusion”里，名字也和模型一样，svc的应该要先打开他的webui然后切换到“独立目录模式”才能正常使用api
