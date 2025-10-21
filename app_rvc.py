@@ -225,7 +225,7 @@ def wwy_downloader(
 
 
 
-def convert(song_name_src, key_shift, vocal_vol, inst_vol, model_dropdown):
+def convert(song_name_src, key_shift, vocal_vol, inst_vol, model_dropdown, reverb_intensity = 4):
   """进行翻唱推理合成"""
   split_model = "UVR-HP5"
   if not song_name_src: raise gr.Error("请输入歌曲ID或链接！")
@@ -282,6 +282,34 @@ def convert(song_name_src, key_shift, vocal_vol, inst_vol, model_dropdown):
 
     from pedalboard import Pedalboard, Compressor, Reverb, HighpassFilter, PeakFilter, LowpassFilter, PitchShift
 
+    # ========== 修正后的智能混响参数计算 ==========
+    # 定义参数的锚点
+    # 强度级别:   0 (最小)       4 (默认)       10 (最大)
+    room_size_map =  (0.15,          0.40,          0.90)
+    wet_level_map =  (0.10,          0.25,          0.45)
+
+    # 根据滑块位置，在两段之间进行线性插值
+    if reverb_intensity <= 4:
+        # 在 0-4 区间
+        # 计算当前位置在该区间的百分比
+        percent = reverb_intensity / 4.0
+        # 在 (最小) 和 (默认) 参数之间插值
+        room_size_val = room_size_map[0] + (room_size_map[1] - room_size_map[0]) * percent
+        wet_level_val = wet_level_map[0] + (wet_level_map[1] - wet_level_map[0]) * percent
+    else:
+        # 在 4-10 区间
+        # 计算当前位置在该区间的百分比
+        percent = (reverb_intensity - 4) / 6.0  # (10 - 4 = 6)
+        # 在 (默认) 和 (最大) 参数之间插值
+        room_size_val = room_size_map[1] + (room_size_map[2] - room_size_map[1]) * percent
+        wet_level_val = wet_level_map[1] + (wet_level_map[2] - wet_level_map[1]) * percent
+
+    # 干信号总是与湿信号互补
+    dry_level_val = 1.0 - wet_level_val
+
+    print(f"🎤 混响设置: 强度 {reverb_intensity}/10 => 房间大小={room_size_val:.2f}, 湿润度={wet_level_val:.2f}")
+    # ========================================
+    
     board = Pedalboard([
         HighpassFilter(cutoff_frequency_hz=80),
         PeakFilter(cutoff_frequency_hz=200, gain_db=1.5, q=0.7),
@@ -295,10 +323,10 @@ def convert(song_name_src, key_shift, vocal_vol, inst_vol, model_dropdown):
             release_ms=150.0
         ),
         Reverb(
-            room_size=0.50,
-            damping=0.4,
-            wet_level=0.3,
-            dry_level=0.7,
+            room_size=room_size_val,
+            damping=0.4,           # 阻尼可以保持不变，以维持音色
+            wet_level=wet_level_val,
+            dry_level=dry_level_val,
             width=0.7
         )
     ])
@@ -423,9 +451,16 @@ with app:
       
       with gr.Row():
         inp5 = gr.Slider(minimum=-12, maximum=12, value=0, step=1, label="歌曲人声升降调", info="默认为0，+2为升高2个key，以此类推")
-        inp6 = gr.Slider(minimum=-3, maximum=3, value=0, step=1, label="调节人声音量，默认为0")
-        inp7 = gr.Slider(minimum=-3, maximum=3, value=0, step=1, label="调节伴奏音量，默认为0")
-      
+        inp6 = gr.Slider(minimum=-3, maximum=3, value=0, step=0.5, label="调节人声音量，默认为0")
+        inp7 = gr.Slider(minimum=-3, maximum=3, value=0, step=0.5, label="调节伴奏音量，默认为0")
+      # ========== 新增：混响强度滑块 ==========
+      with gr.Row():
+        inp_reverb = gr.Slider(
+            minimum=0, maximum=10, value=4, step=0.5,
+            label="混响强度",
+            info="0为干声，4为默认值，10为宏大混响"
+        )
+      # ========================================
       btn = gr.Button("一键开启AI翻唱之旅吧💕", variant="primary")
     
     with gr.Column():
@@ -434,7 +469,7 @@ with app:
   # 绑定事件
   refresh_btn.click(refresh_models, outputs=model_dropdown,api_name=None)
   switch_btn.click(switch_model, inputs=model_dropdown, outputs=model_status)
-  btn.click(convert, [inp1, inp5, inp6, inp7,model_dropdown], out, api_name="None")
+  btn.click(convert, [inp1, inp5, inp6, inp7,model_dropdown, inp_reverb], out, api_name="None")
   api_model_name = gr.Textbox(visible=False)
   api_output = gr.Audio(visible=False)
   gr.Button("API Convert", visible=False).click(
@@ -462,5 +497,6 @@ else:
 
 app.queue(max_size=40, api_open=False)
 app.launch(server_name="0.0.0.0", share=True, show_error=True)
+
 
 
