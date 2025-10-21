@@ -283,7 +283,7 @@ def sanitize_filename(filename):
 # =================================================================
 #               核心转换流程 & Gradio UI
 # =================================================================
-def convert(song_name_src, key_shift, vocal_vol, inst_vol, model_dropdown):
+def convert(song_name_src, key_shift, vocal_vol, inst_vol, model_dropdown, reverb_intensity = 4):
     """进行翻唱推理合成"""
     if not song_name_src: raise gr.Error("请输入歌曲ID或链接！")
     split_model = "UVR-HP5"
@@ -303,10 +303,37 @@ def convert(song_name_src, key_shift, vocal_vol, inst_vol, model_dropdown):
     print("开始处理音频")
     audio_data, sr = librosa.load(inferred_audio_path, sr=None, mono=False)
     if audio_data.ndim == 1: audio_data = audio_data.reshape(1, -1)
+    # ========== 修正后的智能混响参数计算 ==========
+    # 定义参数的锚点
+    # 强度级别:   0 (最小)       4 (默认)       10 (最大)
+    room_size_map =  (0.15,          0.40,          0.90)
+    wet_level_map =  (0.10,          0.25,          0.45)
+
+    # 根据滑块位置，在两段之间进行线性插值
+    if reverb_intensity <= 4:
+        # 在 0-4 区间
+        # 计算当前位置在该区间的百分比
+        percent = reverb_intensity / 4.0
+        # 在 (最小) 和 (默认) 参数之间插值
+        room_size_val = room_size_map[0] + (room_size_map[1] - room_size_map[0]) * percent
+        wet_level_val = wet_level_map[0] + (wet_level_map[1] - wet_level_map[0]) * percent
+    else:
+        # 在 4-10 区间
+        # 计算当前位置在该区间的百分比
+        percent = (reverb_intensity - 4) / 6.0  # (10 - 4 = 6)
+        # 在 (默认) 和 (最大) 参数之间插值
+        room_size_val = room_size_map[1] + (room_size_map[2] - room_size_map[1]) * percent
+        wet_level_val = wet_level_map[1] + (wet_level_map[2] - wet_level_map[1]) * percent
+
+    # 干信号总是与湿信号互补
+    dry_level_val = 1.0 - wet_level_val
+
+    print(f"🎤 混响设置: 强度 {reverb_intensity}/10 => 房间大小={room_size_val:.2f}, 湿润度={wet_level_val:.2f}")
+    # ========================================
     board = Pedalboard([
         HighpassFilter(80), PeakFilter(200, 1.5, 0.7), PeakFilter(3000, 2.0, 1.0),
         PeakFilter(7000, -3.0, 2.0), LowpassFilter(16000), Compressor(-18.0, 4.0, 5.0, 150.0),
-        Reverb(0.5, 0.4, 0.3, 0.7, 0.7)
+        Reverb(room_size_val, 0.4, wet_level_val, dry_level_val, 0.7)
     ])
     processed = board(audio_data, sr)
     processed_int16 = (processed.T * 32768).astype(np.int16)
@@ -382,8 +409,16 @@ with app:
                 inp1 = gr.Textbox(label="请填写想要AI翻唱的网易云id或链接", placeholder="114514")
             with gr.Row():
                 inp5 = gr.Slider(-12, 12, value=0, step=1, label="歌曲人声升降调")
-                inp6 = gr.Slider(-10, 10, value=0, step=1, label="调节人声音量(dB)")
-                inp7 = gr.Slider(-10, 10, value=0, step=1, label="调节伴奏音量(dB)")
+                inp6 = gr.Slider(-3, 3, value=0, step=0.5, label="调节人声音量(dB)")
+                inp7 = gr.Slider(-3, 3, value=0, step=0.5, label="调节伴奏音量(dB)")
+            # ========== 新增：混响强度滑块 ==========
+            with gr.Row():
+                inp_reverb = gr.Slider(
+                    minimum=0, maximum=10, value=4, step=0.5,
+                    label="混响强度",
+                    info="0为干声，4为默认值，10为宏大混响"
+                )
+              # ========================================
             btn = gr.Button("一键开启AI翻唱之旅吧💕", variant="primary")
         with gr.Column():
             out = gr.Audio(label="AI歌手为您倾情演唱的歌曲🎶", type="filepath", interactive=False)
@@ -396,7 +431,7 @@ with app:
         return status_msg, speaker_id
     refresh_btn.click(refresh_models_ui, outputs=model_dropdown,api_name=None)
     load_btn.click(load_model_ui, inputs=model_dropdown, outputs=[model_status, speaker_id_state],api_name=None)
-    btn.click(convert, [inp1, inp5, inp6, inp7, model_dropdown], out, api_name="None")
+    btn.click(convert, [inp1, inp5, inp6, inp7, model_dropdown, inp_reverb], out, api_name="None")
     api_model_name = gr.Textbox(visible=False)
     api_output = gr.Audio(visible=False)
     gr.Button("API Convert", visible=False).click(
@@ -417,6 +452,7 @@ else:
 
 app.queue(max_size=40, api_open=False)
 app.launch(server_name="0.0.0.0",server_port=7866, share=True, show_error=True)
+
 
 
 
