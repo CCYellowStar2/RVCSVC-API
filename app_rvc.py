@@ -179,7 +179,9 @@ import numpy as np
 import librosa
 import soundfile
 import gradio as gr
-
+import scipy.signal
+if not hasattr(scipy.signal, 'hann'):
+    scipy.signal.hann = np.hanning
 split_model = "UVR-HP5"
   
 
@@ -225,7 +227,7 @@ def wwy_downloader(
 
 
 
-def convert(song_name_src, key_shift, vocal_vol, inst_vol, model_dropdown, reverb_intensity = 4):
+def convert(song_name_src, key_shift, vocal_vol, inst_vol, model_dropdown, reverb_intensity = 4, delay_intensity = 0):
   """进行翻唱推理合成"""
   split_model = "UVR-HP5"
   if not song_name_src: raise gr.Error("请输入歌曲ID或链接！")
@@ -280,7 +282,7 @@ def convert(song_name_src, key_shift, vocal_vol, inst_vol, model_dropdown, rever
     if audio_data.ndim == 1:
         audio_data = audio_data.reshape(1, -1)
 
-    from pedalboard import Pedalboard, Compressor, Reverb, HighpassFilter, PeakFilter, LowpassFilter, PitchShift
+    from pedalboard import Pedalboard, Compressor, Reverb, HighpassFilter, PeakFilter, LowpassFilter, PitchShift, Delay
 
     # ========== 修正后的智能混响参数计算 ==========
     # 定义参数的锚点
@@ -309,8 +311,8 @@ def convert(song_name_src, key_shift, vocal_vol, inst_vol, model_dropdown, rever
 
     print(f"🎤 混响设置: 强度 {reverb_intensity}/10 => 房间大小={room_size_val:.2f}, 湿润度={wet_level_val:.2f}")
     # ========================================
-    
-    board = Pedalboard([
+    inst_path = f"output/{split_model}/{song_name_src}/instrument_{song_name_src}.wav_10.wav"    
+    effects = [
         HighpassFilter(cutoff_frequency_hz=80),
         PeakFilter(cutoff_frequency_hz=200, gain_db=1.5, q=0.7),
         PeakFilter(cutoff_frequency_hz=3000, gain_db=2.0, q=1.0),
@@ -322,14 +324,67 @@ def convert(song_name_src, key_shift, vocal_vol, inst_vol, model_dropdown, rever
             attack_ms=5.0,
             release_ms=150.0
         ),
+    ]
+    
+    # ========== 只有当用户开启延迟时，才执行所有相关计算 ==========
+    if delay_intensity > 0:
+        print("🎤 启用回声效果，开始准备参数...")
+        
+        # 1. 自动检测歌曲BPM
+        try:
+            print("🎵 正在检测歌曲BPM...")
+            y_inst, sr_inst = librosa.load(inst_path, sr=None)
+            tempo, _ = librosa.beat.beat_track(y=y_inst, sr=sr_inst)
+            
+            # ========== 新增的健壮性检查 ==========
+            # 检查 tempo 是否为 NumPy 数组，如果是，则提取其第一个元素
+            # 这可以兼容返回单个浮点数或单元素数组的各种 librosa 版本
+            if isinstance(tempo, np.ndarray):
+                actual_tempo = tempo[0]
+            else:
+                actual_tempo = tempo
+            # ========================================
+
+            if actual_tempo > 0:
+                # 现在使用 actual_tempo 进行所有操作
+                print(f"✅ 检测到歌曲BPM约为: {actual_tempo:.1f}")
+                delay_seconds_val = (60.0 / actual_tempo) * 0.5 
+            else:
+                print("⚠️ 未能检测到有效的BPM，将使用默认值。")
+                delay_seconds_val = 0.5
+                
+        except Exception as e:
+            # 打印具体的错误信息，方便未来调试
+            print(f"⚠️ BPM检测失败: {type(e).__name__}: {e}，将使用默认值。")
+            delay_seconds_val = 0.5
+            
+        # 2. 计算延迟混合度
+        delay_mix_val = (delay_intensity / 10.0) * 0.35
+        
+        # 3. 将 Delay 效果器添加到列表中
+        print(f"🎤 回声设置: 强度 {delay_intensity}/10 => 混合度={delay_mix_val:.2f}, 延迟时间={delay_seconds_val:.3f}s (BPM同步)")
+        effects.append(
+            Delay(
+                delay_seconds=delay_seconds_val,
+                feedback=0.25,
+                mix=delay_mix_val
+            )
+        )
+    # ==========================================================
+    
+    # 最后添加混响效果器 (这总是在延迟之后)
+    effects.append(
         Reverb(
             room_size=room_size_val,
-            damping=0.4,           # 阻尼可以保持不变，以维持音色
+            damping=0.4,
             wet_level=wet_level_val,
             dry_level=dry_level_val,
-            width=0.7
+            width=0.8
         )
-    ])
+    )
+    
+    # 用最终的效果器列表创建 Pedalboard
+    board = Pedalboard(effects)
 
     processed = board(audio_data, sr)
     processed_int16 = (processed.T * 32768).astype(np.int16)
@@ -345,7 +400,7 @@ def convert(song_name_src, key_shift, vocal_vol, inst_vol, model_dropdown, rever
     
     # ========== 新增：处理伴奏音高 ==========
     print("🎵 准备伴奏...")
-    inst_path = f"output/{split_model}/{song_name_src}/instrument_{song_name_src}.wav_10.wav"
+    
     key_shift = optimize_pitch_shift(key_shift)
     # 当升降调不为0且不是±12（八度）时，同步调整伴奏
     if key_shift != 0 and abs(key_shift) != 12:
@@ -461,6 +516,11 @@ with app:
             info="0为干声，4为默认值，10为宏大混响"
         )
       # ========================================
+        inp_delay = gr.Slider(
+            minimum=0, maximum=10, value=0, step=0.5,
+            label="回声(延迟)效果",
+            info="0为关闭，数值越大回声越明显"
+        )
       btn = gr.Button("一键开启AI翻唱之旅吧💕", variant="primary")
     
     with gr.Column():
@@ -469,7 +529,7 @@ with app:
   # 绑定事件
   refresh_btn.click(refresh_models, outputs=model_dropdown,api_name=None)
   switch_btn.click(switch_model, inputs=model_dropdown, outputs=model_status)
-  btn.click(convert, [inp1, inp5, inp6, inp7,model_dropdown, inp_reverb], out, api_name="None")
+  btn.click(convert, [inp1, inp5, inp6, inp7,model_dropdown, inp_reverb, inp_delay], out, api_name="None")
   api_model_name = gr.Textbox(visible=False)
   api_output = gr.Audio(visible=False)
   gr.Button("API Convert", visible=False).click(
@@ -497,6 +557,7 @@ else:
 
 app.queue(max_size=40, api_open=False)
 app.launch(server_name="0.0.0.0", share=True, show_error=True)
+
 
 
 
