@@ -55,23 +55,29 @@ class AudioPre:
         for d in range(bands_n, 0, -1):
             bp = self.mp.param["band"][d]
             if d == bands_n:  # high-end band
+                # ========================================================
+                # 🔥 修复 1：librosa 0.10+ load 函数必须使用关键字参数
+                # ========================================================
                 (
                     X_wave[d],
                     _,
-                ) = librosa.core.load(  # 理论上librosa读取可能对某些音频有bug，应该上ffmpeg读取，但是太麻烦了弃坑
+                ) = librosa.load(
                     music_file,
-                    bp["sr"],
-                    False,
+                    sr=bp["sr"],        # 必须加 sr=
+                    mono=False,         # 必须加 mono=
                     dtype=np.float32,
                     res_type=bp["res_type"],
                 )
                 if X_wave[d].ndim == 1:
                     X_wave[d] = np.asfortranarray([X_wave[d], X_wave[d]])
             else:  # lower bands
-                X_wave[d] = librosa.core.resample(
+                # ========================================================
+                # 🔥 修复 2：librosa 0.10+ resample 函数也必须使用关键字参数
+                # ========================================================
+                X_wave[d] = librosa.resample(
                     X_wave[d + 1],
-                    self.mp.param["band"][d + 1]["sr"],
-                    bp["sr"],
+                    orig_sr=self.mp.param["band"][d + 1]["sr"], # 必须加 orig_sr=
+                    target_sr=bp["sr"],                         # 必须加 target_sr=
                     res_type=bp["res_type"],
                 )
             # Stft of wave source

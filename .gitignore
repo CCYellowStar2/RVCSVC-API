@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+venv/
+env/
+python/
+output/
+temp/
+audio_rvc.wav
+msst/pretrain/
+*.wav
+*.mp3
+*.flac
