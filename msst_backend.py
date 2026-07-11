@@ -2,6 +2,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from urllib.request import urlopen
 
 import librosa
 import soundfile as sf
@@ -10,6 +11,10 @@ import torch
 
 MSST_ROOT = Path(__file__).resolve().parent / "msst"
 MSST_SELECTION = "MSST BS-Roformer"
+MSST_MODEL_URL = (
+    "https://modelscope.cn/models/CCYellowStar/bs_roformer_karaoke_frazer_becruily/"
+    "resolve/master/bs_roformer_karaoke_frazer_becruily.ckpt"
+)
 MODEL_PROFILES = {
     MSST_SELECTION: (
         Path("pretrain/vocal_models/bs_roformer_karaoke_frazer_becruily.ckpt"),
@@ -36,9 +41,33 @@ def asset_paths(root: Path = MSST_ROOT, model_selection: str = MSST_SELECTION) -
     return root / model_relative_path, root / config_relative_path
 
 
+def ensure_model_downloaded(model_path: Path) -> Path:
+    if model_path.is_file() and model_path.stat().st_size > 0:
+        return model_path
+
+    temporary_path = model_path.with_suffix(model_path.suffix + ".part")
+    model_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path.unlink(missing_ok=True)
+    print(f"Downloading missing MSST model to: {model_path}")
+    try:
+        with urlopen(MSST_MODEL_URL, timeout=60) as response, temporary_path.open("wb") as output:
+            while chunk := response.read(1024 * 1024):
+                output.write(chunk)
+        if temporary_path.stat().st_size == 0:
+            raise RuntimeError("download produced an empty file")
+        temporary_path.replace(model_path)
+    except Exception as error:
+        temporary_path.unlink(missing_ok=True)
+        raise RuntimeError(f"Failed to download MSST model to {model_path}: {error}") from error
+    return model_path
+
+
 def validate_assets(root: Path = MSST_ROOT, model_selection: str = MSST_SELECTION) -> tuple[Path, Path]:
     model_path, config_path = asset_paths(root, model_selection)
-    if not model_path.is_file():
+    model_missing = not model_path.is_file() or model_path.stat().st_size == 0
+    if model_missing and config_path.is_file():
+        ensure_model_downloaded(model_path)
+    if not model_path.is_file() or model_path.stat().st_size == 0:
         raise FileNotFoundError(f"MSST model file not found: {model_path}")
     if not config_path.is_file():
         raise FileNotFoundError(f"MSST config file not found: {config_path}")
