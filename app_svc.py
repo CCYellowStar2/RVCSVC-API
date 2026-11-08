@@ -1,6 +1,9 @@
 import re, os, requests, json, torch, argparse, base64, time
 from difflib import SequenceMatcher
+from types import SimpleNamespace
 from urllib.parse import urlparse
+
+from audio_source import fetch_song_audio
 
 # --- 全局配置 ---
 SVC_API_BASE = "http://127.0.0.1:7865"
@@ -224,24 +227,8 @@ download_file_openxlab(
 pre_fun_hp5 = AudioPre(agg=10, model_path=os.path.join(weight_uvr5_root, "5_HP-Karaoke-UVR.pth"), device=device, is_half=is_half)
 
 def get_response(song_id):
-    print("开始下载歌曲")
-    try:
-        response = requests.get(f"https://biliplayer.91vrchat.com/player/?url=https://music.163.com/song?id={song_id}",allow_redirects=True, timeout=30)
-        if response.status_code == 200:
-            return response
-    except Exception as e:
-        print(f"主源下载失败: {e}")
-    
-    print("使用备用源下载歌曲")
-    try:
-        response1 = requests.get(
-            f"https://api.vkeys.cn/v2/music/netease?id={song_id}",
-            timeout=30
-        ).json()["data"]["url"]
-        res = requests.get(response1, timeout=30)
-        return res
-    except Exception as e:
-        raise Exception(f"所有下载源均失败: {e}")
+    """多源下载歌曲，返回带 .content 的对象（保持原有 audio_content = get_response(x).content 写法）。"""
+    return SimpleNamespace(content=fetch_song_audio(song_id))
 
 def cookie_to_dict(cookie_string):
     cookie_dict = {}
