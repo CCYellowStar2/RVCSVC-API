@@ -13,6 +13,7 @@
 """
 
 import json
+import re
 
 import requests
 
@@ -156,7 +157,10 @@ def _bili_get(url: str, params: dict, timeout: int = 30):
 
 
 def _bili_video_info(bvid: str) -> dict:
-    data = _bili_get("https://api.bilibili.com/x/web-interface/view", {"bvid": bvid})
+    try:
+        data = _bili_get("https://api.bilibili.com/x/web-interface/view", {"bvid": bvid})
+    except RuntimeError as error:
+        raise RuntimeError(f"{error}（BV 号区分大小写，请从视频页复制完整 BV 号）") from error
     if not data.get("cid"):
         raise RuntimeError("视频信息里没有 cid")
     return data
@@ -207,6 +211,22 @@ def _bili_download_audio(bvid: str) -> bytes:
         print(f"B站 durl 下载失败: {error}")
 
     raise RuntimeError("B站音频下载失败 -> " + " | ".join(problems))
+
+
+_BV_PATTERN = re.compile(r"BV[0-9A-Za-z]{10}", re.IGNORECASE)
+_AV_PATTERN = re.compile(r"(?:^|[^0-9A-Za-z])av(\d+)", re.IGNORECASE)
+
+
+def extract_bilibili_id(text) -> str | None:
+    """从 BV 号 / av 号 / B 站视频链接里抠出视频标识，认不出来返回 None。"""
+    text = str(text or "").strip()
+    match = _BV_PATTERN.search(text)
+    if match:
+        return "BV" + match.group(0)[2:]
+    match = _AV_PATTERN.search(text)
+    if match:
+        return "av" + match.group(1)
+    return None
 
 
 def _is_bilibili_id(identifier: str) -> bool:

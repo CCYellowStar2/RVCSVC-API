@@ -6,7 +6,7 @@ import argparse
 from difflib import SequenceMatcher
 from types import SimpleNamespace
 
-from audio_source import fetch_song_audio
+from audio_source import extract_bilibili_id, fetch_song_audio
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -208,13 +208,17 @@ def convert(song_name_src, key_shift, vocal_vol, inst_vol, model_dropdown, rever
       current_uvr_mode = "VR-HP5"
       split_model_dir = "UVR-HP5"
 
-  if not song_name_src: raise gr.Error("请输入歌曲ID或链接！")
-  
-  if song_name_src.startswith("http"):
-    try: song_name_src = song_name_src.split('id=')[1].split('&')[0]
-    except IndexError: raise gr.Error("无效的网易云链接格式！")
-  
+  if not song_name_src: raise gr.Error("请输入歌曲ID、网易云链接，或 B 站 BV 号 / 视频链接！")
+
   song_name_src = song_name_src.strip()
+  if song_name_src.startswith("http"):
+    bili_id = extract_bilibili_id(song_name_src)
+    if bili_id:
+      song_name_src = bili_id
+    else:
+      try: song_name_src = song_name_src.split('id=')[1].split('&')[0]
+      except IndexError: raise gr.Error("无法从链接里识别 id（支持网易云 id / 网易云链接 / B 站 BV 号或视频链接）")
+
   print(f"处理歌曲ID: {song_name_src} | 使用分离模型: {current_uvr_mode}")
   
   audio_rvc_path = os.path.join(SCRIPT_DIR, "audio_rvc.wav")
@@ -394,7 +398,7 @@ with app:
         model_status = gr.Textbox(label="模型状态", value="请选择模型", interactive=False)
       
       with gr.Row():
-        inp1 = gr.Textbox(label="请填写想要AI翻唱的网易云id或链接", placeholder="114514", info="直接填写网易云id或链接")
+        inp1 = gr.Textbox(label="请填写网易云 id / 链接，或 B 站 BV 号 / 视频链接", placeholder="114514 或 BV1NZ4y147dQ", info="支持网易云 id、网易云链接、B 站 BV 号 / av 号 / 视频链接")
       
       # ========== 新增：选择分离模型 ==========
       with gr.Row():
