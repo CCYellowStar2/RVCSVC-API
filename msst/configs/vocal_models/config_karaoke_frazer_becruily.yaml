@@ -125,5 +125,5 @@ training:
 inference:
   batch_size: 2
   dim_t: 2001
-  num_overlap: 8
+  num_overlap: 3
   normalize: false
