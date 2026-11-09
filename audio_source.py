@@ -114,6 +114,13 @@ def _source_gdstudio(song_id: str) -> bytes:
     return _get_bytes(link, timeout=180)
 
 
+def _source_meting_qijieya(song_id: str) -> bytes:
+    """qijieya 的 meting 实例：实测能拿到完整音轨（inj46ahow 同曲只给 ~480KB 试听）。"""
+    return _get_bytes(
+        f"https://api.qijieya.cn/meting/?server=netease&type=url&id={song_id}", timeout=180
+    )
+
+
 def _source_meting(song_id: str) -> bytes:
     return _get_bytes(f"https://api.injahow.cn/meting/?server=netease&type=url&id={song_id}")
 
@@ -133,6 +140,7 @@ def _source_vkeys(song_id: str) -> bytes:
 _SOURCES = (
     ("91vrchat", _source_91vrchat),
     ("gdstudio", _source_gdstudio),
+    ("meting-qijieya", _source_meting_qijieya),
     ("meting", _source_meting),
     ("outer", _source_outer),
     ("vkeys", _source_vkeys),
