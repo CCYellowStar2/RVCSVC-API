@@ -95,15 +95,39 @@ def _index_score(model_name, index_name):
     return (1, SequenceMatcher(None, model_name, index_name).ratio())
 
 
+# RVC API 返回的 index 路径是相对「RVC 项目目录」的（如 logs\xxx.index），
+# 而后端自己的 CWD 是 RVCSVC-API，直接 open 会找不到文件 —— 所以要按这些根目录去找。
+_RVC_INDEX_ROOTS = [
+    root
+    for root in (
+        os.environ.get("RVC_PROJECT_DIR"),
+        r"D:\RVC20240604Nvidia",
+        os.getcwd(),
+    )
+    if root
+]
+
+
+def _resolve_index_path(path):
+    """把 RVC 给的相对 index 路径解析成真实可读路径（找不到就原样返回）。"""
+    if os.path.isabs(path) and os.path.isfile(path):
+        return path
+    for root in _RVC_INDEX_ROOTS:
+        candidate = os.path.join(root, path)
+        if os.path.isfile(candidate):
+            return candidate
+    return path
+
+
 def _index_vector_count(path):
-    """读 faiss 索引头，返回特征向量数；认不出返回 -1。
+    """读 faiss 索引头，返回特征向量数；找不到文件或认不出返回 -1。
 
     faiss 写出的 IVF 索引头：magic(4) + d(int32) + ntotal(int64) + ...
     空索引 ntotal=0，RVC 用到它会在 pipeline 里
     `big_npy[ix]` 取到 ix=-1 直接 IndexError（已被实测踩到）。
     """
     try:
-        with open(path, "rb") as handle:
+        with open(_resolve_index_path(path), "rb") as handle:
             head = handle.read(16)
         if len(head) < 16 or head[:4] != b"IwFl":
             return -1
@@ -116,20 +140,24 @@ def find_index(model):
     if not index:
         return None
     model_name = os.path.splitext(model)[0].lower()
-    best_match = None
-    best_key = (0, 0.0)
     threshold = 0.4
+
+    usable = []
+    skipped_empty = []
     for index_path in index:
         index_name = os.path.splitext(os.path.basename(index_path))[0].lower()
-        count = _index_vector_count(index_path)
-        if count == 0:
-            # 空索引：RVC 用到它会在 pipeline 里 IndexError（big_npy 长度为 0），提前跳过
-            print(f"⚠️ 跳过空索引（0 个特征向量，需重建）: {index_path}")
-            continue
         key = _index_score(model_name, index_name)
+        if _index_vector_count(index_path) == 0:
+            # 空索引：RVC 用到它会在 pipeline 里 IndexError（big_npy 长度为 0），提前跳过
+            skipped_empty.append((key, index_path))
+            continue
+        usable.append((key, index_path))
+
+    best_key, best_match = max(usable) if usable else ((0, 0.0), None)
+    for key, index_path in skipped_empty:
         if key > best_key:
-            best_key = key
-            best_match = index_path
+            print(f"⚠️ 本应命中空索引（0 个特征向量，需重建），已跳过: {index_path}")
+
     best_score = best_key[1]
     if best_score < threshold:
         print(f"未找到匹配的 index（最高相似度: {best_score:.2f}）")
