@@ -34,13 +34,42 @@ _AUDIO_MAGIC = (
 )
 
 
+_MIN_BYTES = 1_000_000  # 超过这个大小直接放行
+_MIN_SECONDS = 45       # 小于这个大小才去量时长；短于此时长视为试听片段
+_MIN_BYTES_ANY = 64 * 1024  # 小于这个大小基本是错误页，连量都不用量
+
+
+def _measure_seconds(content: bytes) -> float:
+    """用 pydub(ffmpeg) 量一下音频时长；失败返回 0。"""
+    try:
+        from io import BytesIO
+
+        from pydub import AudioSegment
+
+        return len(AudioSegment.from_file(BytesIO(content))) / 1000.0
+    except Exception:
+        return 0.0
+
+
 def _looks_like_audio(content: bytes) -> bool:
-    if len(content) < _MIN_BYTES:
+    """判断是不是可用音频。
+
+    大文件直接放行；小文件（<1MB）可能是短歌、也可能是 30 秒试听片段，
+    所以量一下时长再决定，避免把合法的短歌误判掉。
+    """
+    if len(content) < _MIN_BYTES_ANY:
         return False
-    if content[:4].startswith(_AUDIO_MAGIC):
+    is_audio = content[:4].startswith(_AUDIO_MAGIC) or content[4:8] == b"ftyp"
+    if not is_audio:
+        return False
+    if len(content) >= _MIN_BYTES:
         return True
-    # m4a / mp4：第 4~8 字节是 ftyp
-    return content[4:8] == b"ftyp"
+    seconds = _measure_seconds(content)
+    if seconds >= _MIN_SECONDS:
+        _log(f"小文件但时长 {seconds:.0f} 秒，按短音频放行（{len(content) / 1024:.0f} KB）")
+        return True
+    _log(f"只包含 {seconds:.0f} 秒音频（{len(content) / 1024:.0f} KB），判为试听片段")
+    return False
 
 
 def _log(message: str) -> None:
