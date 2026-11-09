@@ -117,6 +117,30 @@ _ALLOW_FUZZY_INDEX = os.environ.get("RVC_ALLOW_FUZZY_INDEX", "1").strip().lower(
     "off",
 )
 
+# 检索特征占比：0 = 完全不用索引特征，1 = 完全用检索结果。
+# 借用别的模型的索引时调低（如 0.3~0.5）能少被对方的音色拉走。
+_DEFAULT_INDEX_RATE = 0.75
+
+
+def _load_index_rate():
+    """读索引权重：环境变量 RVC_INDEX_RATE 优先，其次同目录 config.local.json，默认 0.75。"""
+    value = os.environ.get("RVC_INDEX_RATE")
+    if value is None:
+        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.local.json")
+        try:
+            with open(config_path, encoding="utf-8") as handle:
+                value = json.load(handle).get("index_rate")
+        except Exception:
+            value = None
+    try:
+        rate = float(value)
+    except (TypeError, ValueError):
+        return _DEFAULT_INDEX_RATE
+    return min(1.0, max(0.0, rate))
+
+
+_INDEX_RATE = _load_index_rate()
+
 
 def _resolve_index_path(path):
     """把 RVC 给的相对 index 路径解析成真实可读路径（找不到就原样返回）。"""
@@ -351,7 +375,7 @@ def convert(song_name_src, key_shift, vocal_vol, inst_vol, model_dropdown, rever
         "rmvpe",
         "",
         index_value,
-        0.75,
+        _INDEX_RATE,
         3,
         0,
         0.25,
