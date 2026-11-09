@@ -95,6 +95,23 @@ def _index_score(model_name, index_name):
     return (1, SequenceMatcher(None, model_name, index_name).ratio())
 
 
+def _index_vector_count(path):
+    """读 faiss 索引头，返回特征向量数；认不出返回 -1。
+
+    faiss 写出的 IVF 索引头：magic(4) + d(int32) + ntotal(int64) + ...
+    空索引 ntotal=0，RVC 用到它会在 pipeline 里
+    `big_npy[ix]` 取到 ix=-1 直接 IndexError（已被实测踩到）。
+    """
+    try:
+        with open(path, "rb") as handle:
+            head = handle.read(16)
+        if len(head) < 16 or head[:4] != b"IwFl":
+            return -1
+        return int.from_bytes(head[8:16], "little", signed=True)
+    except Exception:
+        return -1
+
+
 def find_index(model):   
     if not index:
         return None
@@ -104,6 +121,11 @@ def find_index(model):
     threshold = 0.4
     for index_path in index:
         index_name = os.path.splitext(os.path.basename(index_path))[0].lower()
+        count = _index_vector_count(index_path)
+        if count == 0:
+            # 空索引：RVC 用到它会在 pipeline 里 IndexError（big_npy 长度为 0），提前跳过
+            print(f"⚠️ 跳过空索引（0 个特征向量，需重建）: {index_path}")
+            continue
         key = _index_score(model_name, index_name)
         if key > best_key:
             best_key = key
@@ -115,6 +137,8 @@ def find_index(model):
     if best_match:
         best_match="./"+ best_match
         print(f"找到匹配: {best_match}（档位 {best_key[0]}，相似度 {best_score:.2f}）")
+        if best_key[0] == 1:
+            print("⚠️ 该 index 只是按相似度猜出来的（名字对不上），可能不是这个模型的检索库")
     return best_match
     
 
