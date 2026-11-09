@@ -38,17 +38,38 @@ def optimize_pitch_shift(key_shift):
         return key_shift
 # ======================================
 
+def _name_match_score(source_name, candidate_name, threshold=0.4):
+    """给候选名打分，返回 (档位, 分数)。
+
+    纯 SequenceMatcher 会算反：`chuhua2` 对 `chuhua_v2` 得 0.875，
+    对真正对应的 `chuhua2_v2` 只有 0.8235，于是挑错文件。
+    所以先按名字关系分档，同档再比相似度：
+      4 = 完全相同
+      3 = 候选以源名开头（chuhua2 -> chuhua2_v2），越短越优先
+      2 = 源名以候选开头（候选是被截断的名字）
+      1 = 其它，按相似度（低于 threshold 视为不匹配）
+    """
+    if candidate_name == source_name:
+        return (4, 1.0)
+    if candidate_name.startswith(source_name):
+        return (3, 1.0 - (len(candidate_name) - len(source_name)) * 0.01)
+    if source_name.startswith(candidate_name):
+        return (2, 1.0 - (len(source_name) - len(candidate_name)) * 0.01)
+    score = SequenceMatcher(None, source_name, candidate_name).ratio()
+    return (1, score) if score >= threshold else (0, score)
+
+
 def find_best_fuzzy_match(source_basename, candidate_list, threshold=0.4, default_value="not_found"):
-    """在候选列表中模糊查找与源名称最匹配的文件。"""
-    best_score = threshold
+    """在候选列表中查找与源名称最匹配的文件（先按名字关系分档，再比相似度）。"""
+    best_key = (0, 0.0)
     best_match = default_value
     for candidate_path in candidate_list:
         candidate_basename = os.path.splitext(os.path.basename(candidate_path))[0]
-        score = SequenceMatcher(None, source_basename, candidate_basename).ratio()
-        if score > best_score:
-            best_score = score
+        key = _name_match_score(source_basename, candidate_basename, threshold)
+        if key > best_key:
+            best_key = key
             best_match = candidate_path
-    return best_match, best_score
+    return best_match, best_key[1]
 
 
 def get_models_list_api():

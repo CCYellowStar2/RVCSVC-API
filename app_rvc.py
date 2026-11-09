@@ -75,25 +75,46 @@ def show_model():
     print(f"获取模型列表失败: {e}")
     return []
 
+def _index_score(model_name, index_name):
+    """给候选 index 打分，返回 (档位, 分数)。
+
+    纯 SequenceMatcher 会算反：模型 `chuhua2` 与 `chuhua_v2` 相似度 0.875，
+    而真正对应的 `chuhua2_v2` 只有 0.8235，于是挑错文件。
+    所以先按「名字关系」分档，同档再比相似度：
+      4 = 完全相同
+      3 = 候选以模型名开头（chuhua2 -> chuhua2_v2），越短越优先
+      2 = 模型名以候选开头（候选是被截断的名字）
+      1 = 其它，按相似度
+    """
+    if index_name == model_name:
+        return (4, 1.0)
+    if index_name.startswith(model_name):
+        return (3, 1.0 - (len(index_name) - len(model_name)) * 0.01)
+    if model_name.startswith(index_name):
+        return (2, 1.0 - (len(model_name) - len(index_name)) * 0.01)
+    return (1, SequenceMatcher(None, model_name, index_name).ratio())
+
+
 def find_index(model):   
     if not index:
         return None
     model_name = os.path.splitext(model)[0].lower()
     best_match = None
-    best_score = 0
+    best_key = (0, 0.0)
     threshold = 0.4
     for index_path in index:
         index_name = os.path.splitext(os.path.basename(index_path))[0].lower()
-        score = SequenceMatcher(None, model_name, index_name).ratio()
-        if score > best_score:
-            best_score = score
+        key = _index_score(model_name, index_name)
+        if key > best_key:
+            best_key = key
             best_match = index_path
+    best_score = best_key[1]
     if best_score < threshold:
         print(f"未找到匹配的 index（最高相似度: {best_score:.2f}）")
         return None
     if best_match:
         best_match="./"+ best_match
-        print(f"找到匹配: {best_match}（相似度: {best_score:.2f}）")
+        print(f"找到匹配: {best_match}（档位 {best_key[0]}，相似度 {best_score:.2f}）")
     return best_match
     
 
