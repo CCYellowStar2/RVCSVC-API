@@ -266,21 +266,47 @@ def convert(song_name_src, key_shift, vocal_vol, inst_vol, model_dropdown, rever
 
   print("🎤 RVC 推理中...")
   switch_model(model_dropdown)
-  response = requests.post(f"{RVC_API_BASE}/run/infer_convert", json={
-    "data": [
-      0,
-      audio_rvc_path,
-      key_shift,
-      None,
-      "rmvpe",
-      "",
-      find_index(model_dropdown),
-      0.75,
-      3,
-      0,
-      0.25,
-      0.33,
-  ]}).json()
+  index_path = find_index(model_dropdown)
+
+  def _infer(index_value):
+    """跑一次推理，返回 (响应 JSON, HTTP 状态)。"""
+    payload = {
+      "data": [
+        0,
+        audio_rvc_path,
+        key_shift,
+        None,
+        "rmvpe",
+        "",
+        index_value,
+        0.75,
+        3,
+        0,
+        0.25,
+        0.33,
+      ]
+    }
+    resp = requests.post(f"{RVC_API_BASE}/run/infer_convert", json=payload, timeout=1800)
+    try:
+      body = resp.json()
+    except Exception:
+      body = {"error": resp.text[:300]}
+    return body, resp.status_code
+
+  response, status = _infer(index_path)
+
+  # index 文件损坏/不存在时 RVC 会直接 500（响应里只有 {"error": null}），
+  # 这时退回「不用 index」再跑一次，至少保证能出歌。
+  if "data" not in response and index_path:
+    print(f"⚠️ 带 index 推理失败（HTTP {status}，响应 {str(response)[:120]}），改用无 index 重试")
+    response, status = _infer("")
+    if "data" in response:
+      print("✅ 无 index 推理成功（本次音色检索未启用）")
+
+  if "data" not in response:
+    raise RuntimeError(
+      f"RVC 推理失败：HTTP {status}，响应 {str(response)[:300]}（index={index_path}）"
+    )
 
   data = response["data"][1]["name"]
 
