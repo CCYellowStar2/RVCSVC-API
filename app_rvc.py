@@ -107,12 +107,14 @@ _RVC_INDEX_ROOTS = [
     if root
 ]
 
-# 是否允许「纯靠名字相似度」挑索引（默认关闭：避免自动套用别的模型的检索库）
-_ALLOW_FUZZY_INDEX = os.environ.get("RVC_ALLOW_FUZZY_INDEX", "").strip().lower() in (
-    "1",
-    "true",
-    "yes",
-    "on",
+# 是否允许「纯靠名字相似度」挑索引。
+# 默认开启（=还原成早先的行为：名字对不上也会按相似度借用，使用时打一条警告）；
+# 想严格要求「只认名字相关」时把环境变量设成 RVC_ALLOW_FUZZY_INDEX=0。
+_ALLOW_FUZZY_INDEX = os.environ.get("RVC_ALLOW_FUZZY_INDEX", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+    "off",
 )
 
 
@@ -171,9 +173,8 @@ def find_index(model):
         print(f"未找到匹配的 index（最高相似度: {best_score:.2f}）")
         return None
 
-    # 只认「名字对得上」的索引：档位 1 表示纯相似度猜的（比如 chuhua2 猜成 chuhua_v2），
-    # 那是**别的模型**的检索库，自动拿来用会让音色串味 —— 宁可不用索引。
-    # 确实想借用的话，设环境变量 RVC_ALLOW_FUZZY_INDEX=1 可恢复旧行为。
+    # 档位 1 = 纯靠相似度猜的（如 chuhua2 猜成 chuhua_v2），那是别的模型的检索库。
+    # 默认仍然允许（还原早先行为），但会打一条警告；设 RVC_ALLOW_FUZZY_INDEX=0 可禁用。
     if best_key[0] < 2 and not _ALLOW_FUZZY_INDEX:
         print(
             f"未找到与该模型名字相关的 index（最高只是相似度 {best_score:.2f}，"
@@ -184,6 +185,8 @@ def find_index(model):
     if best_match:
         best_match="./"+ best_match
         print(f"找到匹配: {best_match}（档位 {best_key[0]}，相似度 {best_score:.2f}）")
+        if best_key[0] < 2:
+            print("⚠️ 该 index 名字与模型对不上，是按相似度借用的，音色可能偏向该索引的训练者")
     return best_match
     
 
