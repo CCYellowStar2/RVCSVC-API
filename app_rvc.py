@@ -1,4 +1,6 @@
 import re, os, time
+import hashlib
+import shutil
 import requests
 import json
 import torch
@@ -141,6 +143,37 @@ def _load_index_rate():
 
 _INDEX_RATE = _load_index_rate()
 
+# RVC 用的 faiss 读不了中文路径（FileIOReader 拿到的窄字符串按 ANSI 解释，文件找不到），
+# 所以中文名的 index 要复制一份 ASCII 副本给它用。
+_ASCII_INDEX_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp", "index_ascii")
+
+
+def _ascii_mirror(path):
+    """返回 RVC 能读的 index 路径：名字全是 ASCII 就原样返回，否则复制一份 ASCII 副本。"""
+    if all(ord(ch) < 128 for ch in str(path)):
+        return path
+    source = _resolve_index_path(path)
+    if not os.path.isfile(source):
+        print(f"⚠️ 索引文件不存在: {path}")
+        return path
+    try:
+        os.makedirs(_ASCII_INDEX_DIR, exist_ok=True)
+        stem, ext = os.path.splitext(os.path.basename(source))
+        digest = hashlib.md5(stem.encode("utf-8")).hexdigest()[:8]
+        target = os.path.join(_ASCII_INDEX_DIR, f"idx_{digest}{ext}")
+        fresh = (
+            os.path.isfile(target)
+            and os.path.getsize(target) == os.path.getsize(source)
+            and os.path.getmtime(target) >= os.path.getmtime(source)
+        )
+        if not fresh:
+            shutil.copyfile(source, target)
+            print(f"索引名含中文（faiss 读不了），已复制 ASCII 副本: {target}")
+        return target
+    except Exception as error:
+        print(f"⚠️ 中文索引复制失败，仍用原路径（RVC 可能读不了）: {error}")
+        return path
+
 
 def _resolve_index_path(path):
     """把 RVC 给的相对 index 路径解析成真实可读路径（找不到就原样返回）。"""
@@ -207,11 +240,13 @@ def find_index(model):
         return None
 
     if best_match:
-        best_match="./"+ best_match
-        print(f"找到匹配: {best_match}（档位 {best_key[0]}，相似度 {best_score:.2f}）")
+        served = _ascii_mirror(best_match)
+        print(f"找到匹配: {served}（档位 {best_key[0]}，相似度 {best_score:.2f}）")
         if best_key[0] < 2:
             print("⚠️ 该 index 名字与模型对不上，是按相似度借用的，音色可能偏向该索引的训练者")
-    return best_match
+        # 绝对路径原样返回；相对路径补 ./（RVC 那边按自己的 CWD 解析）
+        return served if os.path.isabs(served) else "./" + served
+    return None
     
 
 from uvr5.vr import AudioPre
