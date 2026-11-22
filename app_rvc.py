@@ -255,6 +255,15 @@ _INDEX_RATE = _load_index_rate()
 # 后处理的两处高频处理：7 kHz 处的增益、整体低通截止。
 # 新版 RVC 出来的声音本身比旧版更闷（实测频谱重心低约 500 Hz、6 kHz 以上能量少 3%），
 # 把 7 kHz 的 -3 dB 削平甚至改成 +1~2 dB 能补回一些咬字清晰度。
+_F0_METHOD = str(
+    os.environ.get("RVC_F0_METHOD")
+    or _load_local_config().get("f0_method")
+    or "rmvpe"
+).strip()
+if _F0_METHOD not in {"pm", "rmvpe", "fcpe", "harvest", "crepe", "rmvpe_gpu"}:
+    print(f"f0_method={_F0_METHOD!r} 不是已知算法，回退到 rmvpe")
+    _F0_METHOD = "rmvpe"
+
 _VOCAL_AIR_DB = _load_float("vocal_air_db", -3.0, "RVC_VOCAL_AIR_DB", -12.0, 12.0)
 _VOCAL_LOWPASS_HZ = _load_float("vocal_lowpass_hz", 16000.0, "RVC_VOCAL_LOWPASS_HZ", 8000.0, 20000.0)
 
@@ -556,7 +565,7 @@ def convert(song_name_src, key_shift, vocal_vol, inst_vol, model_dropdown, rever
     if layout == "9":
       audio_arg = {"name": audio_rvc_path, "data": None, "is_file": True}
       return {
-        "data": [0, audio_arg, key_shift, "rmvpe", index_value, _INDEX_RATE, 0, 0.25, 0.33]
+        "data": [0, audio_arg, key_shift, _F0_METHOD, index_value, _INDEX_RATE, 0, 0.25, 0.33]
       }
     return {
       "data": [
@@ -564,7 +573,7 @@ def convert(song_name_src, key_shift, vocal_vol, inst_vol, model_dropdown, rever
         audio_rvc_path,
         key_shift,
         None,
-        "rmvpe",
+        _F0_METHOD,
         "",
         index_value,
         _INDEX_RATE,
