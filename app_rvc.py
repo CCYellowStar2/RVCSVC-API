@@ -544,6 +544,8 @@ def convert(song_name_src, key_shift, vocal_vol, inst_vol, model_dropdown, rever
 
   print("🎤 RVC 推理中...")
   switch_model(model_dropdown)
+  if not _INFER_LAYOUT:  # 换了 RVC 版本时缓存会失效，这里补一次探测
+    _detect_infer_layout()
   # RVC 自己给出的匹配结果最准（它会同时看 logs 与 assets/indices，并优先后者），
   # 拿不到时才退回我们自己的名字匹配
   index_path = _SERVER_INDEX_HINT or find_index(model_dropdown)
@@ -609,6 +611,10 @@ def convert(song_name_src, key_shift, vocal_vol, inst_vol, model_dropdown, rever
           _INFER_LAYOUT = layout
           print(f"infer_convert 参数布局: {layout} 个（已记住）")
         return body, resp.status_code
+    # 两种布局都失败：多半是 RVC 换了版本（缓存的布局已过期），丢掉缓存下次重新探测
+    if _INFER_LAYOUT:
+      print("两种参数布局都失败，清掉缓存的布局（下次推理前重新探测）")
+      _INFER_LAYOUT = None
     return last_body, last_status
 
   response, status = _infer(index_path)
