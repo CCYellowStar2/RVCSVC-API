@@ -70,9 +70,13 @@ def _scan_index_files():
 
     新版 RVC（如 RVC20260718Nvidia）的 `infer_refresh` 只返回模型列表，
     不再把 index 选项放进 data[1]，而且 index 可能放在 `indices/` 而不是 `logs/`。
-    这里做个兜底：接口不给就自己扫，顺便兼容两种目录。
+    这里做个兜底：接口不给就自己扫。
+
+    两个「只取第一个」的规则，避免选出 RVC 自己都加载不了的文件：
+    - 只在**第一个真的扫到 index 的根目录**里找（新旧版安装并存时不会混在一起）
+    - 每个根目录里只取**第一个有 index 的子目录**（和 RVC 下拉框一致，logs 优先，
+      避免 `logs/x.index` 与 `assets/indices/x.index` 同名重复）
     """
-    found = []
     for root in _RVC_INDEX_ROOTS:
         if not root or not os.path.isdir(root):
             continue
@@ -80,19 +84,14 @@ def _scan_index_files():
             folder = os.path.join(root, sub)
             if not os.path.isdir(folder):
                 continue
-            for name in sorted(os.listdir(folder)):
-                if not name.lower().endswith(".index"):
-                    continue
-                relative = os.path.relpath(os.path.join(folder, name), root)
-                found.append(relative.replace("/", "\\"))
-    # 去重保序
-    seen = set()
-    unique = []
-    for item in found:
-        if item not in seen:
-            seen.add(item)
-            unique.append(item)
-    return unique
+            names = sorted(name for name in os.listdir(folder) if name.lower().endswith(".index"))
+            if not names:
+                continue
+            return [
+                os.path.join(sub, name).replace("/", "\\")
+                for name in names
+            ]
+    return []
 
 
 def _choices(payload, position):
@@ -169,6 +168,7 @@ _RVC_INDEX_ROOTS = [
     root
     for root in (
         os.environ.get("RVC_PROJECT_DIR"),
+        r"D:\RVC20260718Nvidia",
         r"D:\RVC20240604Nvidia",
         os.getcwd(),
     )
