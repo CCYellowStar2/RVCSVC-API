@@ -137,6 +137,7 @@ def show_model():
       if index:
         print(f"接口未返回 index 列表，已从目录扫描到 {len(index)} 个（含 logs/ 与 indices/）")
     print(f"已加载 {len(models)} 个模型、{len(index)} 个 index")
+    _detect_infer_layout()
     return models
   except Exception as e:
     print(f"获取模型列表失败: {e}")
@@ -207,6 +208,29 @@ def _load_index_rate():
 
 
 _INDEX_RATE = _load_index_rate()
+
+# infer_convert 的参数个数：旧版 12 个、新版（RVC20260718 起）9 个。
+# 启动时用 gradio 的 view_api 探测一次，之后按它组装参数。
+_INFER_LAYOUT = None
+
+
+def _detect_infer_layout():
+  """探测 RVC 的 infer_convert 需要几个参数（"12" 或 "9"），失败返回 None。"""
+  global _INFER_LAYOUT
+  if _INFER_LAYOUT:
+    return _INFER_LAYOUT
+  try:
+    from gradio_client import Client
+
+    client = Client(f"{RVC_API_BASE}/", verbose=False)
+    info = client.view_api(return_format="dict", print_info=False)
+    params = ((info.get("named_endpoints") or {}).get("/infer_convert") or {}).get("parameters") or []
+    if params:
+      _INFER_LAYOUT = str(len(params))
+      print(f"检测到 infer_convert 参数个数: {len(params)}")
+  except Exception as error:
+    print(f"探测 infer_convert 参数个数失败（推理时会逐个尝试）: {error}")
+  return _INFER_LAYOUT
 
 # RVC 用的 faiss 读不了中文路径（FileIOReader 拿到的窄字符串按 ANSI 解释，文件找不到），
 # 所以中文名的 index 要复制一份 ASCII 副本给它用。
@@ -464,9 +488,19 @@ def convert(song_name_src, key_shift, vocal_vol, inst_vol, model_dropdown, rever
   switch_model(model_dropdown)
   index_path = find_index(model_dropdown)
 
-  def _infer(index_value):
-    """跑一次推理，返回 (响应 JSON, HTTP 状态)。"""
-    payload = {
+  def _build_payload(layout, index_value):
+    """按 RVC 版本组装 infer_convert 的参数。
+
+    旧版（12 个）：sid, 音频, 变调, F0文件, 音高算法, index手动路径, index下拉, 检索率,
+                   滤波半径, 重采样, 包络混合, 保护清辅音
+    新版（9 个，RVC20260718 起）：sid, 音频, 变调, 音高算法, index路径, 检索率,
+                   重采样, 包络混合, 保护清辅音
+    """
+    if layout == "9":
+      return {
+        "data": [0, audio_rvc_path, key_shift, "rmvpe", index_value, _INDEX_RATE, 0, 0.25, 0.33]
+      }
+    return {
       "data": [
         0,
         audio_rvc_path,
@@ -482,12 +516,33 @@ def convert(song_name_src, key_shift, vocal_vol, inst_vol, model_dropdown, rever
         0.33,
       ]
     }
-    resp = requests.post(f"{RVC_API_BASE}/run/infer_convert", json=payload, timeout=1800)
-    try:
-      body = resp.json()
-    except Exception:
-      body = {"error": resp.text[:300]}
-    return body, resp.status_code
+
+  def _infer(index_value):
+    """跑一次推理，自动适配旧版/新版的参数个数，成功后记住布局。"""
+    global _INFER_LAYOUT
+    layouts = [_INFER_LAYOUT] if _INFER_LAYOUT else []
+    for layout in ("12", "9"):
+      if layout not in layouts:
+        layouts.append(layout)
+
+    last_body, last_status = {"error": "没有可用的参数布局"}, 0
+    for layout in layouts:
+      resp = requests.post(
+        f"{RVC_API_BASE}/run/infer_convert",
+        json=_build_payload(layout, index_value),
+        timeout=1800,
+      )
+      try:
+        body = resp.json()
+      except Exception:
+        body = {"error": resp.text[:300]}
+      last_body, last_status = body, resp.status_code
+      if "data" in body:
+        if _INFER_LAYOUT != layout:
+          _INFER_LAYOUT = layout
+          print(f"infer_convert 参数布局: {layout} 个（已记住）")
+        return body, resp.status_code
+    return last_body, last_status
 
   response, status = _infer(index_path)
 
