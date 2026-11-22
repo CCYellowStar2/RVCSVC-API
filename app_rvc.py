@@ -212,16 +212,22 @@ _ALLOW_FUZZY_INDEX = os.environ.get("RVC_ALLOW_FUZZY_INDEX", "1").strip().lower(
 _DEFAULT_INDEX_RATE = 0.75
 
 
+def _load_local_config():
+    """读同目录 config.local.json（不存在就返回空 dict）。"""
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.local.json")
+    try:
+        with open(config_path, encoding="utf-8") as handle:
+            data = json.load(handle)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
 def _load_index_rate():
-    """读索引权重：环境变量 RVC_INDEX_RATE 优先，其次同目录 config.local.json，默认 0.75。"""
+    """读索引权重：环境变量 RVC_INDEX_RATE 优先，其次 config.local.json，默认 0.75。"""
     value = os.environ.get("RVC_INDEX_RATE")
     if value is None:
-        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.local.json")
-        try:
-            with open(config_path, encoding="utf-8") as handle:
-                value = json.load(handle).get("index_rate")
-        except Exception:
-            value = None
+        value = _load_local_config().get("index_rate")
     try:
         rate = float(value)
     except (TypeError, ValueError):
@@ -229,7 +235,28 @@ def _load_index_rate():
     return min(1.0, max(0.0, rate))
 
 
+def _load_float(key, default, env_name=None, low=None, high=None):
+    """从环境变量 / config.local.json 读一个浮点配置。"""
+    value = os.environ.get(env_name) if env_name else None
+    if value is None:
+        value = _load_local_config().get(key)
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    if low is not None and number < low:
+        number = low
+    if high is not None and number > high:
+        number = high
+    return number
+
+
 _INDEX_RATE = _load_index_rate()
+# 后处理的两处高频处理：7 kHz 处的增益、整体低通截止。
+# 新版 RVC 出来的声音本身比旧版更闷（实测频谱重心低约 500 Hz、6 kHz 以上能量少 3%），
+# 把 7 kHz 的 -3 dB 削平甚至改成 +1~2 dB 能补回一些咬字清晰度。
+_VOCAL_AIR_DB = _load_float("vocal_air_db", -3.0, "RVC_VOCAL_AIR_DB", -12.0, 12.0)
+_VOCAL_LOWPASS_HZ = _load_float("vocal_lowpass_hz", 16000.0, "RVC_VOCAL_LOWPASS_HZ", 8000.0, 20000.0)
 
 # infer_convert 的参数个数：旧版 12 个、新版（RVC20260718 起）9 个。
 # 启动时用 gradio 的 view_api 探测一次，之后按它组装参数。
@@ -623,8 +650,10 @@ def convert(song_name_src, key_shift, vocal_vol, inst_vol, model_dropdown, rever
         HighpassFilter(cutoff_frequency_hz=80),
         PeakFilter(cutoff_frequency_hz=200, gain_db=1.5, q=0.7),
         PeakFilter(cutoff_frequency_hz=3000, gain_db=2.0, q=1.0),
-        PeakFilter(cutoff_frequency_hz=7000, gain_db=-3.0, q=2.0),
-        LowpassFilter(cutoff_frequency_hz=16000),
+        # 7 kHz 与低通截止都可配（config.local.json / 环境变量），
+        # 新版 RVC 本身偏闷，把这里削掉的补回来能改善咬字清晰度
+        PeakFilter(cutoff_frequency_hz=7000, gain_db=_VOCAL_AIR_DB, q=2.0),
+        LowpassFilter(cutoff_frequency_hz=_VOCAL_LOWPASS_HZ),
         Compressor(
             threshold_db=-18.0,
             ratio=4.0,
