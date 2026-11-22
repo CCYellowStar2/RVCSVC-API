@@ -62,6 +62,66 @@ def change_model(model):
     print(f"切换模型失败: {e}")
     return f"❌ 切换模型失败: {e}"
 
+_INDEX_SUBDIRS = ("logs", "indices", "index", os.path.join("assets", "indices"))
+
+
+def _scan_index_files():
+    """直接扫 RVC 目录下的 index 文件（返回 `logs\\xxx.index` 这种相对路径）。
+
+    新版 RVC（如 RVC20260718Nvidia）的 `infer_refresh` 只返回模型列表，
+    不再把 index 选项放进 data[1]，而且 index 可能放在 `indices/` 而不是 `logs/`。
+    这里做个兜底：接口不给就自己扫，顺便兼容两种目录。
+    """
+    found = []
+    for root in _RVC_INDEX_ROOTS:
+        if not root or not os.path.isdir(root):
+            continue
+        for sub in _INDEX_SUBDIRS:
+            folder = os.path.join(root, sub)
+            if not os.path.isdir(folder):
+                continue
+            for name in sorted(os.listdir(folder)):
+                if not name.lower().endswith(".index"):
+                    continue
+                relative = os.path.relpath(os.path.join(folder, name), root)
+                found.append(relative.replace("/", "\\"))
+    # 去重保序
+    seen = set()
+    unique = []
+    for item in found:
+        if item not in seen:
+            seen.add(item)
+            unique.append(item)
+    return unique
+
+
+def _choices(payload, position):
+    """从 infer_refresh 的 data[position] 里取 choices，兼容 dict / 字符串列表两种写法。"""
+    try:
+        block = (payload.get("data") or [])[position]
+    except (IndexError, AttributeError):
+        return []
+    if isinstance(block, dict):
+        choices = block.get("choices") or []
+    elif isinstance(block, list):
+        choices = block
+    else:
+        choices = []
+    return [str(item) for item in choices if str(item).strip()]
+
+
+def _normalize_index_choice(item):
+    """接口只给裸文件名时补上目录前缀（新版 RVC 的 index 可能在 indices/ 下）。"""
+    text = str(item or "").strip()
+    if not text or "\\" in text or "/" in text:
+        return text
+    for sub in _INDEX_SUBDIRS:
+        for root in _RVC_INDEX_ROOTS:
+            if root and os.path.isfile(os.path.join(root, sub, text)):
+                return os.path.join(sub, text).replace("/", "\\")
+    return text
+
+
 def show_model():
   global models, index
   try:
@@ -69,9 +129,14 @@ def show_model():
       "data": []
     }, timeout=10).json()
 
-    models = response["data"][0]["choices"]
-    index = response["data"][1]["choices"]
-    print(f"已加载 {len(models)} 个模型")
+    models = _choices(response, 0)
+    index = [_normalize_index_choice(item) for item in _choices(response, 1)]
+    if not index:
+      # 新版 RVC 不再通过接口返回 index 选项，改为自己扫目录
+      index = _scan_index_files()
+      if index:
+        print(f"接口未返回 index 列表，已从目录扫描到 {len(index)} 个（含 logs/ 与 indices/）")
+    print(f"已加载 {len(models)} 个模型、{len(index)} 个 index")
     return models
   except Exception as e:
     print(f"获取模型列表失败: {e}")
