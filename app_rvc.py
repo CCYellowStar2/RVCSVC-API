@@ -48,49 +48,71 @@ def cookie_to_dict(cookie_string):
             pass
     return cookie_dict
     
+_SERVER_INDEX_HINT = ""
+
+
+def _extract_index_hint(payload):
+  """从 infer_change_voice 的返回里取出 RVC 自己匹配到的 index 路径。
+
+  新版 RVC（webui.py 里 index_root=logs、outside_index_root=assets/indices）在
+  get_vc 里用 get_index_path_from_model() 自动选 index（优先 assets/indices，
+  还会跳过名字带 trained 的文件），并把**绝对路径**作为输出返回。
+  这比我们自己按名字猜更准，所以优先用它。
+  """
+  for block in payload.get("data") or []:
+    value = block.get("value") if isinstance(block, dict) else block
+    if isinstance(value, str) and value.strip().lower().endswith(".index"):
+      return value.strip()
+  return ""
+
+
 def change_model(model):
+  global _SERVER_INDEX_HINT
   try:
     response = requests.post(f"{RVC_API_BASE}/run/infer_change_voice", json={
       "data": [
         model,
         0.33,
         0.33,
-    ]}, timeout=10).json()
+    ]}, timeout=30).json()
+    _SERVER_INDEX_HINT = _extract_index_hint(response)
     print(f"模型已切换为: {model}")
+    if _SERVER_INDEX_HINT:
+      print(f"RVC 自动匹配到的 index: {_SERVER_INDEX_HINT}")
     return f"✅ 成功切换到模型: {model}"
   except Exception as e:
+    _SERVER_INDEX_HINT = ""
     print(f"切换模型失败: {e}")
     return f"❌ 切换模型失败: {e}"
 
-_INDEX_SUBDIRS = ("logs", "indices", "index", os.path.join("assets", "indices"))
+_INDEX_SUBDIRS = (os.path.join("assets", "indices"), "logs", "indices", "index")
 
 
 def _scan_index_files():
     """直接扫 RVC 目录下的 index 文件（返回 `logs\\xxx.index` 这种相对路径）。
 
     新版 RVC（如 RVC20260718Nvidia）的 `infer_refresh` 只返回模型列表，
-    不再把 index 选项放进 data[1]，而且 index 可能放在 `indices/` 而不是 `logs/`。
-    这里做个兜底：接口不给就自己扫。
+    不再把 index 选项放进 data[1]，所以这里做个兜底扫描。
 
-    两个「只取第一个」的规则，避免选出 RVC 自己都加载不了的文件：
-    - 只在**第一个真的扫到 index 的根目录**里找（新旧版安装并存时不会混在一起）
-    - 每个根目录里只取**第一个有 index 的子目录**（和 RVC 下拉框一致，logs 优先，
-      避免 `logs/x.index` 与 `assets/indices/x.index` 同名重复）
+    新版自己会同时看 `logs`（index_root）和 `assets/indices`（outside_index_root），
+    并且**优先 assets/indices**，所以这里的顺序也把它排前面，与 RVC 行为一致。
     """
     for root in _RVC_INDEX_ROOTS:
         if not root or not os.path.isdir(root):
             continue
+        found = []
         for sub in _INDEX_SUBDIRS:
             folder = os.path.join(root, sub)
             if not os.path.isdir(folder):
                 continue
-            names = sorted(name for name in os.listdir(folder) if name.lower().endswith(".index"))
-            if not names:
-                continue
-            return [
-                os.path.join(sub, name).replace("/", "\\")
-                for name in names
-            ]
+            for name in sorted(os.listdir(folder)):
+                if not name.lower().endswith(".index") or "trained" in name.lower():
+                    continue
+                relative = os.path.join(sub, name).replace("/", "\\")
+                if relative not in found:
+                    found.append(relative)
+        if found:
+            return found
     return []
 
 
@@ -486,7 +508,11 @@ def convert(song_name_src, key_shift, vocal_vol, inst_vol, model_dropdown, rever
 
   print("🎤 RVC 推理中...")
   switch_model(model_dropdown)
-  index_path = find_index(model_dropdown)
+  # RVC 自己给出的匹配结果最准（它会同时看 logs 与 assets/indices，并优先后者），
+  # 拿不到时才退回我们自己的名字匹配
+  index_path = _SERVER_INDEX_HINT or find_index(model_dropdown)
+  if _SERVER_INDEX_HINT:
+    print(f"使用 RVC 自带的 index 匹配: {_SERVER_INDEX_HINT}")
 
   def _build_payload(layout, index_value):
     """按 RVC 版本组装 infer_convert 的参数。
@@ -495,10 +521,15 @@ def convert(song_name_src, key_shift, vocal_vol, inst_vol, model_dropdown, rever
                    滤波半径, 重采样, 包络混合, 保护清辅音
     新版（9 个，RVC20260718 起）：sid, 音频, 变调, 音高算法, index路径, 检索率,
                    重采样, 包络混合, 保护清辅音
+
+    新版用的是 gradio 5，`gr.Audio` 的 preprocess 只认
+    {"name": 路径, "data": None, "is_file": True}（直接传字符串会 TypeError: string indices
+    must be integers），旧版传纯路径即可。
     """
     if layout == "9":
+      audio_arg = {"name": audio_rvc_path, "data": None, "is_file": True}
       return {
-        "data": [0, audio_rvc_path, key_shift, "rmvpe", index_value, _INDEX_RATE, 0, 0.25, 0.33]
+        "data": [0, audio_arg, key_shift, "rmvpe", index_value, _INDEX_RATE, 0, 0.25, 0.33]
       }
     return {
       "data": [
